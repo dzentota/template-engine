@@ -1,0 +1,39 @@
+# Dependencies
+/vendor/
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Tests
+coverage/
+coverage-html/
+coverage.xml
+coverage.txt
+junit.xml
+.phpunit.cache/
+
+# Cache
+cache/
+*.cache
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.temp
+
+# Build artifacts
+build/
+dist/
+
+# PHP specific
+.php_cs.cache
+.phpstan.cache 
