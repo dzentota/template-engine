@@ -51,7 +51,18 @@ class TemplateEngine
             throw new InvalidArgumentException("Template directory does not exist: {$path}");
         }
 
-        $this->paths[$namespace] = rtrim($path, '/');
+        if (!preg_match('/^[a-zA-Z_][a-zA-Z0-9_]*$/', $namespace)) {
+            throw new InvalidArgumentException(
+                "Invalid namespace '{$namespace}': must start with a letter or underscore and contain only alphanumeric characters and underscores."
+            );
+        }
+
+        $realPath = realpath($path);
+        if ($realPath === false) {
+            throw new InvalidArgumentException("Cannot resolve template directory path: {$path}");
+        }
+
+        $this->paths[$namespace] = $realPath;
         return $this;
     }
 
@@ -60,7 +71,7 @@ class TemplateEngine
      */
     public function setCacheDirectory(string $cacheDir): self
     {
-        if (!is_dir($cacheDir) && !mkdir($cacheDir, 0755, true)) {
+        if (!is_dir($cacheDir) && !mkdir($cacheDir, 0700, true)) {
             throw new RuntimeException("Cannot create cache directory: {$cacheDir}");
         }
 
@@ -68,7 +79,12 @@ class TemplateEngine
             throw new RuntimeException("Cache directory is not writable: {$cacheDir}");
         }
 
-        $this->cacheDir = $cacheDir;
+        $realCacheDir = realpath($cacheDir);
+        if ($realCacheDir === false) {
+            throw new RuntimeException("Cannot resolve cache directory path: {$cacheDir}");
+        }
+
+        $this->cacheDir = $realCacheDir;
         return $this;
     }
 
@@ -105,29 +121,21 @@ class TemplateEngine
     public function load(string $name): Template
     {
         $path = $this->findTemplate($name);
-        
-        if ($this->config['cache'] && $this->cacheDir) {
+
+        if ($this->cacheDir !== null) {
             $cacheKey = $this->getCacheKey($name, $path);
-            $cachedTemplate = $this->loadFromCache($cacheKey, $path);
-            
-            if ($cachedTemplate !== null) {
-                return $cachedTemplate;
+            if (!$this->isCacheValid($cacheKey, $path)) {
+                $this->saveToCache($cacheKey, $path);
             }
         }
 
-        $template = new Template($this, $path, $name);
-        
-        if ($this->config['cache'] && $this->cacheDir) {
-            $this->saveToCache($cacheKey, $template);
-        }
-
-        return $template;
+        return new Template($this, $path, $name);
     }
 
     /**
      * Create a secure template variable
      */
-    public function createVariable(mixed $value, string $context = null): TemplateVariable|TemplateVariableCollection
+    public function createVariable(mixed $value, ?string $context = null): TemplateVariable|TemplateVariableCollection
     {
         return TemplateVariable::create($value);
     }
@@ -135,7 +143,7 @@ class TemplateEngine
     /**
      * Get configuration value
      */
-    public function getConfig(string $key = null): mixed
+    public function getConfig(?string $key = null): mixed
     {
         if ($key === null) {
             return $this->config;
@@ -198,50 +206,62 @@ class TemplateEngine
     }
 
     /**
-     * Generate cache key for template
+     * Generate cache key for a template name + resolved path.
+     * Uses SHA-256 over the realpath so the same file never gets duplicate entries.
      */
     private function getCacheKey(string $name, string $path): string
     {
-        return md5($name . '|' . $path . '|' . filemtime($path));
+        return hash('sha256', $name . '|' . $path);
     }
 
     /**
-     * Load template from cache
+     * Return true when a valid, up-to-date cache entry exists for this key/path pair.
      */
-    private function loadFromCache(string $cacheKey, string $originalPath): ?Template
+    private function isCacheValid(string $cacheKey, string $originalPath): bool
     {
-        $cacheFile = $this->cacheDir . '/' . $cacheKey . '.cache';
-        
+        $cacheFile = $this->cacheDir . '/' . $cacheKey . '.json';
+
         if (!is_file($cacheFile)) {
-            return null;
+            return false;
         }
 
-        $cacheData = unserialize(file_get_contents($cacheFile));
-        
-        if ($cacheData === false || !isset($cacheData['template'], $cacheData['mtime'])) {
-            return null;
+        $contents = file_get_contents($cacheFile);
+        if ($contents === false) {
+            return false;
         }
 
-        // Check if original file was modified
-        if (filemtime($originalPath) > $cacheData['mtime']) {
+        $cacheData = json_decode($contents, true);
+
+        if (!is_array($cacheData) || !isset($cacheData['path'], $cacheData['mtime'])) {
+            // Corrupt cache entry — remove it
+            @unlink($cacheFile);
+            return false;
+        }
+
+        // Invalidate if the source file has been modified since the entry was written
+        if (filemtime($originalPath) !== $cacheData['mtime']) {
             unlink($cacheFile);
-            return null;
+            return false;
         }
 
-        return $cacheData['template'];
+        return true;
     }
 
     /**
-     * Save template to cache
+     * Persist a resolved template path to the cache using an atomic write.
      */
-    private function saveToCache(string $cacheKey, Template $template): void
+    private function saveToCache(string $cacheKey, string $path): void
     {
-        $cacheFile = $this->cacheDir . '/' . $cacheKey . '.cache';
-        $cacheData = [
-            'template' => $template,
-            'mtime' => time()
-        ];
+        $cacheFile = $this->cacheDir . '/' . $cacheKey . '.json';
+        // Write to a per-process temp file first, then rename (atomic on POSIX)
+        $tmpFile = $cacheFile . '.' . getmypid() . '.tmp';
 
-        file_put_contents($cacheFile, serialize($cacheData), LOCK_EX);
+        $payload = json_encode([
+            'path'  => $path,
+            'mtime' => filemtime($path),
+        ], JSON_THROW_ON_ERROR);
+
+        file_put_contents($tmpFile, $payload, LOCK_EX);
+        rename($tmpFile, $cacheFile);
     }
 } 

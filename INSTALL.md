@@ -72,9 +72,9 @@
 ```php
 $engine = new TemplateEngine([
     'auto_escape' => true,
-    'cache' => true,
-    'cache_dir' => '/path/to/cache',
-    'debug' => false
+    'cache'       => true,
+    'cache_dir'   => '/path/to/cache',  // Created with 0700 permissions automatically
+    'debug'       => false
 ]);
 ```
 

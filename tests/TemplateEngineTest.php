@@ -229,4 +229,228 @@ class TemplateEngineTest extends TestCase
         $this->assertStringContainsString('<li>Item 2</li>', $output);
         $this->assertStringContainsString('<li>Item 3</li>', $output);
     }
+
+    // -------------------------------------------------------------------------
+    // Caching
+    // -------------------------------------------------------------------------
+
+    public function testCacheHit(): void
+    {
+        $cacheDir = $this->tempDir . '/cache';
+        mkdir($cacheDir);
+
+        $engine = new TemplateEngine(['cache' => true, 'debug' => true]);
+        $engine->addPath($this->tempDir . '/templates');
+        $engine->setCacheDirectory($cacheDir);
+
+        $this->createTemplate('cached', '<p>cached</p>');
+
+        // First render — populates the cache
+        $output1 = $engine->render('cached');
+        $this->assertEquals('<p>cached</p>', $output1);
+
+        // A .json cache file must exist
+        $cacheFiles = glob($cacheDir . '/*.json');
+        $this->assertNotEmpty($cacheFiles, 'Cache file should exist after first render');
+
+        // Second render — must return same output (served from cache)
+        $output2 = $engine->render('cached');
+        $this->assertEquals($output1, $output2);
+    }
+
+    public function testCacheInvalidatedOnFileChange(): void
+    {
+        $cacheDir = $this->tempDir . '/cache';
+        mkdir($cacheDir);
+
+        $engine = new TemplateEngine(['cache' => true, 'debug' => true]);
+        $engine->addPath($this->tempDir . '/templates');
+        $engine->setCacheDirectory($cacheDir);
+
+        $this->createTemplate('changing', '<p>version1</p>');
+        $engine->render('changing');
+
+        // Overwrite template and set a future mtime so the cache sees a change
+        $templatePath = $this->tempDir . '/templates/changing.php';
+        file_put_contents($templatePath, '<p>version2</p>');
+        touch($templatePath, time() + 10);
+
+        $output = $engine->render('changing');
+        $this->assertEquals('<p>version2</p>', $output);
+    }
+
+    public function testCorruptCacheFileIsIgnored(): void
+    {
+        $cacheDir = $this->tempDir . '/cache';
+        mkdir($cacheDir);
+
+        $engine = new TemplateEngine(['cache' => true, 'debug' => true]);
+        $engine->addPath($this->tempDir . '/templates');
+        $engine->setCacheDirectory($cacheDir);
+
+        $this->createTemplate('corrupt', '<p>ok</p>');
+
+        // Prime cache
+        $engine->render('corrupt');
+
+        // Corrupt all cache files
+        foreach (glob($cacheDir . '/*.json') as $file) {
+            file_put_contents($file, 'NOT_VALID_JSON{{{');
+        }
+
+        // Should still render correctly (falls back to disk)
+        $output = $engine->render('corrupt');
+        $this->assertEquals('<p>ok</p>', $output);
+    }
+
+    public function testCacheDirectoryPermissions(): void
+    {
+        $cacheDir = $this->tempDir . '/newcache';
+
+        $engine = new TemplateEngine(['cache' => true]);
+        $engine->addPath($this->tempDir . '/templates');
+        $engine->setCacheDirectory($cacheDir);
+
+        $perms = fileperms($cacheDir) & 0777;
+        $this->assertEquals(0700, $perms, 'Cache directory must be owner-only (0700)');
+    }
+
+    // -------------------------------------------------------------------------
+    // Namespace validation
+    // -------------------------------------------------------------------------
+
+    public function testInvalidNamespaceThrows(): void
+    {
+        $this->expectException(InvalidArgumentException::class);
+        $this->expectExceptionMessage('Invalid namespace');
+
+        mkdir($this->tempDir . '/ns');
+        $this->engine->addPath($this->tempDir . '/ns', 'invalid-namespace!');
+    }
+
+    public function testValidNamespaceAccepted(): void
+    {
+        mkdir($this->tempDir . '/ns2');
+        // Should not throw
+        $this->engine->addPath($this->tempDir . '/ns2', 'my_namespace2');
+        $this->assertTrue(true);
+    }
+
+    // -------------------------------------------------------------------------
+    // SecurityManager
+    // -------------------------------------------------------------------------
+
+    public function testSecurityManagerBlocksDangerousFunctions(): void
+    {
+        $manager = new \Dzentota\TemplateEngine\Security\SecurityManager();
+
+        $source = '<?php echo exec("ls"); ?>';
+        $issues = $manager->validateTemplate($source, 'test.php');
+
+        $this->assertNotEmpty($issues);
+        $types = array_column($issues, 'severity');
+        $this->assertContains('high', $types);
+    }
+
+    public function testSecurityManagerDetectsShortTags(): void
+    {
+        $manager = new \Dzentota\TemplateEngine\Security\SecurityManager();
+
+        $source = '<? echo $var; ?>';
+        $issues = $manager->validateTemplate($source, 'test.php');
+
+        $messages = array_column($issues, 'message');
+        $found = array_filter($messages, fn($m) => str_contains($m, 'Short PHP tags'));
+        $this->assertNotEmpty($found);
+    }
+
+    public function testSecurityManagerDetectsJavascriptProtocol(): void
+    {
+        $manager = new \Dzentota\TemplateEngine\Security\SecurityManager();
+
+        $source = '<a href="javascript:alert(1)">click</a>';
+        $issues = $manager->validateTemplate($source, 'test.php');
+
+        $messages = array_column($issues, 'message');
+        $found = array_filter($messages, fn($m) => str_contains($m, 'XSS'));
+        $this->assertNotEmpty($found);
+    }
+
+    public function testSecurityManagerCleanTemplateHasNoIssues(): void
+    {
+        $manager = new \Dzentota\TemplateEngine\Security\SecurityManager();
+
+        $source = '<?php echo htmlspecialchars($name); ?>';
+        $issues = $manager->validateTemplate($source, 'clean.php');
+
+        $this->assertEmpty($issues);
+    }
+
+    public function testIsFunctionAllowedBlocksDangerousFunctions(): void
+    {
+        $manager = new \Dzentota\TemplateEngine\Security\SecurityManager();
+
+        $this->assertFalse($manager->isFunctionAllowed('eval'));
+        $this->assertFalse($manager->isFunctionAllowed('exec'));
+        $this->assertFalse($manager->isFunctionAllowed('file_get_contents'));
+    }
+
+    public function testIsFunctionAllowedPermitsSafeFunctions(): void
+    {
+        $manager = new \Dzentota\TemplateEngine\Security\SecurityManager();
+
+        $this->assertTrue($manager->isFunctionAllowed('count'));
+        $this->assertTrue($manager->isFunctionAllowed('strtolower'));
+        $this->assertTrue($manager->isFunctionAllowed('date'));
+    }
+
+    public function testSanitizeVariableNameAcceptsValid(): void
+    {
+        $manager = new \Dzentota\TemplateEngine\Security\SecurityManager();
+
+        $this->assertEquals('myVar', $manager->sanitizeVariableName('myVar'));
+        $this->assertEquals('_private', $manager->sanitizeVariableName('_private'));
+        $this->assertEquals('item123', $manager->sanitizeVariableName('item123'));
+    }
+
+    public function testSanitizeVariableNameRejectsInvalid(): void
+    {
+        $manager = new \Dzentota\TemplateEngine\Security\SecurityManager();
+
+        $this->expectException(InvalidArgumentException::class);
+        $manager->sanitizeVariableName('123invalid');
+    }
+
+    public function testSanitizeVariableNameRejectsReservedWords(): void
+    {
+        $manager = new \Dzentota\TemplateEngine\Security\SecurityManager();
+
+        $this->expectException(InvalidArgumentException::class);
+        $manager->sanitizeVariableName('__FILE__');
+    }
+
+    public function testGenerateCSPHeadersReturnsValidHeader(): void
+    {
+        $manager = new \Dzentota\TemplateEngine\Security\SecurityManager();
+
+        $headers = $manager->generateCSPHeaders();
+
+        $this->assertArrayHasKey('Content-Security-Policy', $headers);
+        $csp = $headers['Content-Security-Policy'];
+        $this->assertStringContainsString("default-src 'self'", $csp);
+        $this->assertStringContainsString("frame-ancestors 'none'", $csp);
+    }
+
+    public function testAuditTemplateReturnsScoreAndRecommendations(): void
+    {
+        $manager = new \Dzentota\TemplateEngine\Security\SecurityManager();
+
+        $source = '<?php exec("rm -rf /"); ?>';
+        $audit = $manager->auditTemplate($source, 'dangerous.php');
+
+        $this->assertArrayHasKey('security_score', $audit);
+        $this->assertArrayHasKey('issues', $audit);
+        $this->assertArrayHasKey('recommendations', $audit);
+        $this->assertLessThan(100, $audit['security_score']);
+    }
 } 

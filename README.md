@@ -210,6 +210,8 @@ $engine->addPath('/path/to/templates');
 
 ### Multiple Namespaced Directories
 
+Namespace names must be valid identifiers: start with a letter or underscore, followed by letters, digits, or underscores (`[a-zA-Z_][a-zA-Z0-9_]*`).
+
 ```php
 $engine->addPath('/path/to/app/templates', 'app');
 $engine->addPath('/path/to/admin/templates', 'admin');
@@ -219,9 +221,21 @@ echo $engine->render('@admin/dashboard');
 echo $engine->render('@app/welcome');
 ```
 
+Invalid namespace names throw an `InvalidArgumentException`:
+
+```php
+// ❌ Throws InvalidArgumentException — dashes are not allowed
+$engine->addPath('/path/to/templates', 'my-namespace');
+
+// ✅ OK
+$engine->addPath('/path/to/templates', 'my_namespace');
+```
+
 ## Security Auditing
 
-The template engine includes security auditing capabilities:
+`SecurityManager` is a **static analysis tool** for auditing template source code before deployment. It detects dangerous function calls, short PHP tags, XSS vectors, and oversized templates, and produces a scored report with recommendations.
+
+> **Note:** `SecurityManager` performs source-level auditing only. It does not intercept or block function calls at runtime. Use it in your CI pipeline or development workflow to catch issues early.
 
 ```php
 use Dzentota\TemplateEngine\Security\SecurityManager;
@@ -240,20 +254,6 @@ foreach ($audit['issues'] as $issue) {
 ```
 
 ## Advanced Usage
-
-### Custom Security Configuration
-
-```php
-use Dzentota\TemplateEngine\Security\SecurityManager;
-
-$security = new SecurityManager([
-    'strict_mode' => true,
-    'allow_php_functions' => false,
-    'max_template_size' => 1024 * 1024
-]);
-
-$engine = new TemplateEngine(['security_manager' => $security]);
-```
 
 ### Content Security Policy
 
@@ -333,6 +333,8 @@ if ($developmentMode) {
 
 ### 4. Use Template Caching in Production
 
+Cache files are stored as JSON with `0700` permissions (owner-readable only). The cache is invalidated automatically when a template file is modified.
+
 ```php
 $engine = new TemplateEngine([
     'cache' => true,
@@ -354,9 +356,10 @@ This template engine is designed with security as a primary concern:
 
 - **XSS Prevention**: All output is escaped by default
 - **Context Awareness**: Different escaping for HTML, attributes, JS, CSS, URLs
-- **Directory Traversal Protection**: Templates cannot access files outside designated directories
-- **Function Restrictions**: Dangerous PHP functions are blocked in templates
-- **Security Auditing**: Built-in tools to audit template security
+- **Directory Traversal Protection**: Templates cannot access files outside designated directories using `realpath()` checks
+- **Namespace Validation**: Template namespace names are validated as proper identifiers
+- **Secure Cache Storage**: Cache files use JSON (no PHP object serialization), are written atomically, and stored in a `0700`-permissions directory
+- **Security Auditing**: Built-in static analysis tools to audit template source code
 
 ## Requirements
 

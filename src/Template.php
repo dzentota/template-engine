@@ -122,18 +122,12 @@ class Template
      */
     private function execute(array $variables): void
     {
-        // Helper functions for templates (optional - TemplateVariable provides magic methods)
+        // Helper functions available inside every template
         $include = function(string $template, array $vars = []) use ($variables): string {
             $mergedVars = array_merge($variables, $vars);
             return $this->engine->render($template, $mergedVars);
         };
 
-        $asset = function(string $path): string {
-            // Basic asset helper - can be extended
-            return $this->engine->createVariable($path, 'url');
-        };
-
-        // Legacy helper functions for backward compatibility
         $e = function(mixed $value): TemplateVariable|TemplateVariableCollection {
             if ($value instanceof TemplateVariable || $value instanceof TemplateVariableCollection) {
                 return $value;
@@ -149,8 +143,13 @@ class Template
             return $var instanceof TemplateVariable ? $var('raw') : (string)$var;
         };
 
-        // Extract variables into local scope - they are now TemplateVariable instances
-        extract($variables, EXTR_SKIP);
+        // Inject template variables into local scope, skipping built-in helpers
+        $helpers = ['include', 'e', 'raw'];
+        foreach ($variables as $varName => $varValue) {
+            if (!in_array($varName, $helpers, true)) {
+                $$varName = $varValue;
+            }
+        }
 
         // Include template file
         include $this->path;
