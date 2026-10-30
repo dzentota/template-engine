@@ -134,8 +134,11 @@ class TemplateEngine
 
     /**
      * Create a secure template variable
+     *
+     * Returns a TemplateVariable / TemplateVariableCollection, or the value as-is for
+     * bool, null and non-stringable objects (so `if ($flag)` keeps native truthiness).
      */
-    public function createVariable(mixed $value, ?string $context = null): TemplateVariable|TemplateVariableCollection
+    public function createVariable(mixed $value, ?string $context = null): mixed
     {
         return TemplateVariable::create($value);
     }

@@ -95,8 +95,12 @@ The template engine automatically escapes variables based on their output contex
 <!-- CSS Context -->
 <style>.class { color: <?= $userInput('css') ?>; }</style>
 
-<!-- URL Context -->
-<a href="<?= $userInput('url') ?>">Link</a>
+<!-- Whole URL in href/src: scheme allowlist (http, https, mailto, relative), unsafe → "#" -->
+<a href="<?= $userInput('href') ?>">Link</a>
+<img src="<?= $imageUrl('src') ?>">
+
+<!-- URL component (query value / path segment), rawurlencode() -->
+<a href="/search?q=<?= $userInput('url') ?>">Search</a>
 
 <!-- Raw Output (use with extreme caution) -->
 <div><?= $trustedContent('raw') ?></div>
@@ -134,7 +138,8 @@ echo $engine->render('template', $data);
 <?= $variable('attr') ?>  <!-- For HTML attributes -->
 <?= $variable('js') ?>    <!-- For JavaScript -->
 <?= $variable('css') ?>   <!-- For CSS values -->
-<?= $variable('url') ?>   <!-- For URLs -->
+<?= $variable('href') ?>  <!-- Whole URL in href/src (unsafe schemes → #) -->
+<?= $variable('url') ?>   <!-- URL component, e.g. a query value -->
 <?= $variable('raw') ?>   <!-- Raw/unescaped (use with caution) -->
 ```
 
@@ -143,9 +148,17 @@ echo $engine->render('template', $data);
 Use native PHP syntax:
 
 ```php
-<!-- Conditionals -->
+<!-- Conditionals: bool and null values are passed through unwrapped -->
 <?php if ($user['is_admin']): ?>
     <p>Admin panel available</p>
+<?php endif; ?>
+
+<!-- Strings, numbers and arrays are wrapped objects (always truthy!) — use isTruthy() -->
+<?php if ($items->isTruthy()): ?>
+    <p><?= count($items) ?> items</p>
+<?php endif; ?>
+<?php if ($user['name']->isTruthy()): ?>
+    <p>Hello, <?= $user['name'] ?></p>
 <?php endif; ?>
 
 <!-- Loops -->
@@ -363,7 +376,7 @@ This template engine is designed with security as a primary concern:
 
 ## Requirements
 
-- PHP 8.1 or higher
+- PHP 8.3 or higher
 - `dzentota/template-variable` (dev-main)
 - `dzentota/typedvalue` (dev-master)
 
