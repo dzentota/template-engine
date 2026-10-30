@@ -128,7 +128,7 @@ class Template
             return $this->engine->render($template, $mergedVars);
         };
 
-        $e = function(mixed $value): TemplateVariable|TemplateVariableCollection {
+        $e = function(mixed $value): mixed {
             if ($value instanceof TemplateVariable || $value instanceof TemplateVariableCollection) {
                 return $value;
             }

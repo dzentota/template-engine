@@ -453,4 +453,37 @@ class TemplateEngineTest extends TestCase
         $this->assertArrayHasKey('recommendations', $audit);
         $this->assertLessThan(100, $audit['security_score']);
     }
-} 
+
+    public function testBooleanConditionsAreNotAlwaysTruthy(): void
+    {
+        $this->createTemplate('flags', '<?php if ($flag): ?>A<?php endif; ?><?php if ($user[\'is_admin\']): ?>B<?php endif; ?><?php if ($none): ?>C<?php endif; ?>');
+        $this->assertSame('', $this->engine->render('flags', ['flag' => false, 'user' => ['is_admin' => false], 'none' => null]));
+        $this->assertSame('AB', $this->engine->render('flags', ['flag' => true, 'user' => ['is_admin' => true], 'none' => null]));
+    }
+
+    public function testIsTruthyForWrappedValues(): void
+    {
+        $this->createTemplate('truthy', '<?= $count->isTruthy() ? "y" : "n" ?><?= $items->isTruthy() ? "y" : "n" ?><?= $s->isTruthy() ? "y" : "n" ?>');
+        $this->assertSame('nnn', $this->engine->render('truthy', ['count' => 0, 'items' => [], 's' => '']));
+        $this->assertSame('yyy', $this->engine->render('truthy', ['count' => 2, 'items' => [1], 's' => 'x']));
+    }
+
+    public function testBoolGlobalAndEchoOutput(): void
+    {
+        $this->engine->addGlobal('debugMode', false);
+        $this->createTemplate('echo', '[<?= $debugMode ?>][<?= $on ?>]<?php if (!$debugMode): ?>off<?php endif; ?>');
+        $this->assertSame('[][1]off', $this->engine->render('echo', ['on' => true]));
+    }
+
+    public function testUrlAttributeContextInTemplates(): void
+    {
+        $this->createTemplate('links', '<a href="<?= $bad(\'href\') ?>"></a><a href="<?= $good(\'href\') ?>"></a><img src="<?= $e($img)(\'src\') ?>"><a href="?q=<?= $q(\'url\') ?>"></a>');
+        $out = $this->engine->render('links', [
+            'bad' => " JaVa\tScRiPt:alert(1)",
+            'good' => 'https://example.com/a?b=1&c=2',
+            'img' => 'data:text/html,<script>',
+            'q' => 'a b&c',
+        ]);
+        $this->assertSame('<a href="#"></a><a href="https://example.com/a?b=1&amp;c=2"></a><img src="#"><a href="?q=a%20b%26c"></a>', $out);
+    }
+}

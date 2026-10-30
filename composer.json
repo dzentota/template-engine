@@ -18,7 +18,7 @@
         "xss-protection"
     ],
     "require": {
-        "php": "^8.1",
+        "php": ">=8.3",
         "dzentota/template-variable": "dev-main",
         "dzentota/typedvalue": "dev-master"
     },
